@@ -23,7 +23,7 @@ class ArticleController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Article::with(['section', 'issue']);
+        $query = Article::with(['section']);
 
         // Filters
         if ($request->filled('status')) {

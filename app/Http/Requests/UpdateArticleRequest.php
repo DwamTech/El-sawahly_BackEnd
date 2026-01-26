@@ -39,12 +39,11 @@ class UpdateArticleRequest extends FormRequest
     {
         return [
             'section_id' => 'sometimes|nullable|exists:sections,id',
-            'issue_id' => 'sometimes|nullable|exists:issues,id',
             'title' => 'sometimes|string|max:255',
             'slug' => ['sometimes', 'string', 'max:255', Rule::unique('articles', 'slug')->ignore($this->route('article'))],
             'excerpt' => 'nullable|string',
             'content' => 'sometimes|string',
-            'author_name' => 'sometimes|string|max:255',
+            'author_name' => 'nullable|string|max:255',
             'featured_image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:1048576', // 1GB
             'gregorian_date' => 'nullable|string',
             'hijri_date' => 'nullable|string',

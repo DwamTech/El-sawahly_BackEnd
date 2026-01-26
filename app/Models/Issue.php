@@ -61,22 +61,8 @@ class Issue extends Model
         return null;
     }
 
-    public function getViewsCountAttribute($value)
-    {
-        if ($this->relationLoaded('articles')) {
-            return $this->articles->sum('views_count');
-        }
-
-        return $this->articles()->sum('views_count');
-    }
-
     public function user()
     {
         return $this->belongsTo(User::class);
-    }
-
-    public function articles()
-    {
-        return $this->hasMany(Article::class);
     }
 }

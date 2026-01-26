@@ -50,12 +50,11 @@ class StoreArticleRequest extends FormRequest
     {
         return [
             'section_id' => 'nullable|exists:sections,id',
-            'issue_id' => 'nullable|exists:issues,id',
             'title' => 'required|string|max:255',
             'slug' => 'required|string|unique:articles,slug|max:255',
             'excerpt' => 'nullable|string',
             'content' => 'required|string',
-            'author_name' => 'required|string|max:255',
+            'author_name' => 'nullable|string|max:255',
             'featured_image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:1048576', // 1GB
             'gregorian_date' => 'nullable|string',
             'hijri_date' => 'nullable|string',

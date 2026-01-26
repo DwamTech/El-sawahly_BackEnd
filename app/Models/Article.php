@@ -34,7 +34,6 @@ class Article extends Model
         'published_at' => 'datetime',
         'views_count' => 'integer',
         'section_id' => 'integer',
-        'issue_id' => 'integer',
     ];
 
     public function getFeaturedImageAttribute($value)
@@ -51,8 +50,4 @@ class Article extends Model
         return $this->belongsTo(Section::class);
     }
 
-    public function issue()
-    {
-        return $this->belongsTo(Issue::class)->withDefault();
-    }
 }

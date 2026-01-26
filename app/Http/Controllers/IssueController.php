@@ -85,7 +85,7 @@ class IssueController extends Controller
      */
     public function show($id)
     {
-        $issue = Issue::with('articles')->findOrFail($id);
+        $issue = Issue::findOrFail($id);
 
         // Increment views
         $issue->increment('views_count');
