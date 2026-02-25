@@ -1,42 +1,38 @@
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Http\Controllers\API;
 
-use App\Models\File;
-use App\Models\UploadSession;
-use App\Services\ChunkProcessorService;
+use App\Http\Controllers\Controller;
+use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
 use App\Services\FileValidationService;
 use App\Services\StorageHandlerService;
-use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
+use App\Services\ChunkProcessorService;
+use App\Models\File;
+use App\Models\UploadSession;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 
 class FileUploadController extends Controller
 {
-    private FileValidationService $validationService;
-    private ChunkProcessorService $chunkProcessor;
-    private StorageHandlerService $storageHandler;
+    protected $validationService;
+    protected $storageHandler;
+    protected $chunkProcessor;
 
     public function __construct(
         FileValidationService $validationService,
-        ChunkProcessorService $chunkProcessor,
-        StorageHandlerService $storageHandler
+        StorageHandlerService $storageHandler,
+        ChunkProcessorService $chunkProcessor
     ) {
         $this->validationService = $validationService;
-        $this->chunkProcessor = $chunkProcessor;
         $this->storageHandler = $storageHandler;
+        $this->chunkProcessor = $chunkProcessor;
     }
 
     /**
-     * Initiate file upload
-     * 
-     * POST /api/files/upload/initiate
-     * 
-     * @param Request $request
-     * @return JsonResponse
+     * Initiate a new file upload
      */
     public function initiateUpload(Request $request): JsonResponse
     {
@@ -49,60 +45,50 @@ class FileUploadController extends Controller
                 'mimeType' => 'required|string|max:100',
                 'totalChunks' => 'required|integer|min:1',
                 'targetPath' => 'nullable|string', // Optional target directory path
+                'sessionId' => 'nullable|string|uuid',
             ]);
 
-            // Validate file type against whitelist
-            if (!in_array($validated['mimeType'], $this->getAllowedMimeTypes())) {
+            // Validate file metadata using the service
+            // This replaces the inline checks for allowed mime types and dangerous extensions
+            // to keep the logic centralized in the service while maintaining the controller flow.
+            $validation = $this->validationService->validateMetadata(
+                $validated['fileName'],
+                $validated['fileSize'],
+                $validated['mimeType']
+            );
+
+            if (!$validation['valid']) {
+                // Map service errors to the response format expected by the frontend/test script
+                $errorCode = 'VALIDATION_ERROR';
+                $errorMessage = implode(' ', $validation['errors']);
+
+                // Try to detect specific error types based on message content to match the reference logic
+                if (str_contains($errorMessage, 'File type') && str_contains($errorMessage, 'not allowed')) {
+                    $errorCode = 'INVALID_FILE_TYPE';
+                } elseif (str_contains($errorMessage, 'File size') && str_contains($errorMessage, 'exceeds')) {
+                    $errorCode = 'FILE_TOO_LARGE';
+                } elseif (str_contains($errorMessage, 'suspicious double extension') || str_contains($errorMessage, 'extension') && str_contains($errorMessage, 'not allowed')) {
+                    $errorCode = 'DANGEROUS_FILE_TYPE';
+                }
+
                 return response()->json([
                     'success' => false,
                     'error' => [
-                        'code' => 'INVALID_FILE_TYPE',
-                        'message' => "File type '{$validated['mimeType']}' is not allowed. Please upload a valid file type.",
+                        'code' => $errorCode,
+                        'message' => $errorMessage,
                     ],
                 ], 400);
             }
 
-            // Validate file size against maximum limit
-            $maxFileSize = config('filesystems.max_file_size', 104857600); // 100MB default
-            if ($validated['fileSize'] > $maxFileSize) {
-                $maxSizeMB = round($maxFileSize / 1048576, 2);
-                $fileSizeMB = round($validated['fileSize'] / 1048576, 2);
-                
-                return response()->json([
-                    'success' => false,
-                    'error' => [
-                        'code' => 'FILE_TOO_LARGE',
-                        'message' => "File size ({$fileSizeMB}MB) exceeds the maximum allowed size of {$maxSizeMB}MB.",
-                    ],
-                ], 400);
+            // Use the sanitized filename from validation if available, or sanitize it here again to be safe
+            $sanitizedFileName = $validation['sanitizedFilename'];
+            
+            if (empty($sanitizedFileName)) {
+                // Fallback sanitization if service didn't return it (though it should)
+                $sanitizedFileName = preg_replace('/[^a-zA-Z0-9._-]/', '_', $validated['fileName']);
+                $sanitizedFileName = preg_replace('/_+/', '_', $sanitizedFileName);
+                $sanitizedFileName = trim($sanitizedFileName, '_');
             }
-
-            // Check for dangerous file extensions
-            $extension = strtolower(pathinfo($validated['fileName'], PATHINFO_EXTENSION));
-            if (in_array($extension, $this->getDangerousExtensions())) {
-                Log::warning('Dangerous file upload attempt blocked', [
-                    'filename' => $validated['fileName'],
-                    'extension' => $extension,
-                    'mime_type' => $validated['mimeType'],
-                    'file_size' => $validated['fileSize'],
-                    'user_id' => Auth::id(),
-                    'ip_address' => $request->ip(),
-                    'user_agent' => $request->userAgent(),
-                ]);
-                
-                return response()->json([
-                    'success' => false,
-                    'error' => [
-                        'code' => 'DANGEROUS_FILE_TYPE',
-                        'message' => "File with extension '.{$extension}' is not allowed for security reasons.",
-                    ],
-                ], 400);
-            }
-
-            // Sanitize filename
-            $sanitizedFileName = preg_replace('/[^a-zA-Z0-9._-]/', '_', $validated['fileName']);
-            $sanitizedFileName = preg_replace('/_+/', '_', $sanitizedFileName);
-            $sanitizedFileName = trim($sanitizedFileName, '_');
 
             if (empty($sanitizedFileName)) {
                 return response()->json([
@@ -148,8 +134,8 @@ class FileUploadController extends Controller
                 'file_type' => $validated['fileType'],
                 'mime_type' => $validated['mimeType'],
                 'file_size' => $validated['fileSize'],
-                'file_path' => '',
-                'file_url' => '',
+                'file_path' => '', // Will be set after upload completion
+                'file_url' => '',  // Will be set after upload completion
                 'status' => File::STATUS_PENDING,
                 'upload_session_id' => $uploadSession->session_id,
                 'total_chunks' => $validated['totalChunks'],
@@ -171,10 +157,11 @@ class FileUploadController extends Controller
                 'data' => [
                     'fileId' => $file->id,
                     'sessionId' => $sessionId,
-                    'uploadUrl' => route('files.upload.chunk'),
+                    'uploadUrl' => route('files.upload.chunk'), // Ensure this route exists
                     'expiresAt' => $uploadSession->expires_at->toIso8601String(),
                 ],
             ], 201);
+
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'success' => false,
@@ -203,29 +190,21 @@ class FileUploadController extends Controller
 
     /**
      * Upload a file chunk
-     * 
-     * POST /api/files/upload/chunk
-     * 
-     * @param Request $request
-     * @return JsonResponse
      */
     public function uploadChunk(Request $request): JsonResponse
     {
         try {
-            // Validate request data
             $validated = $request->validate([
-                'fileId' => 'required|integer|exists:files,id',
+                'fileId' => 'required|exists:files,id',
                 'chunkIndex' => 'required|integer|min:0',
-                'totalChunks' => 'required|integer|min:1',
-                'chunk' => 'required|file',
+                'chunk' => 'required|file|max:' . (config('filesystems.chunk_size', 2097152) / 1024 + 1024), // Chunk size + buffer
             ]);
 
             $fileId = $validated['fileId'];
             $chunkIndex = $validated['chunkIndex'];
-            $totalChunks = $validated['totalChunks'];
             $chunk = $request->file('chunk');
 
-            // Verify file belongs to authenticated user
+            // Verify file ownership
             $file = File::where('id', $fileId)
                 ->where('user_id', Auth::id())
                 ->first();
@@ -240,63 +219,65 @@ class FileUploadController extends Controller
                 ], 404);
             }
 
-            // Verify total chunks matches
-            if ((int)$file->total_chunks !== (int)$totalChunks) {
+            // Store chunk
+            $storeResult = $this->chunkProcessor->storeChunk($chunk, $fileId, $chunkIndex);
+
+            if (!$storeResult['success']) {
                 return response()->json([
                     'success' => false,
                     'error' => [
-                        'code' => 'CHUNK_COUNT_MISMATCH',
-                        'message' => "Total chunks mismatch. Expected: {$file->total_chunks}, Got: {$totalChunks}",
+                        'code' => 'CHUNK_UPLOAD_FAILED',
+                        'message' => $storeResult['error'],
                     ],
                 ], 400);
             }
 
-            // Store chunk using ChunkProcessorService
-            $result = $this->chunkProcessor->storeChunk($chunk, $fileId, $chunkIndex);
-
-            if (!$result['success']) {
-                return response()->json([
-                    'success' => false,
-                    'error' => [
-                        'code' => 'CHUNK_STORAGE_FAILED',
-                        'message' => $result['error'],
-                    ],
-                ], 400);
-            }
-
-            // Refresh file to get updated uploaded_chunks count
+            // Check if all chunks uploaded
             $file->refresh();
+            if ($file->uploaded_chunks >= $file->total_chunks) {
+                // Assemble chunks
+                $assemblyResult = $this->chunkProcessor->assembleChunks($fileId);
 
-            Log::info('Chunk uploaded successfully', [
-                'file_id' => $fileId,
-                'chunk_index' => $chunkIndex,
-                'uploaded_chunks' => $file->uploaded_chunks,
-                'total_chunks' => $file->total_chunks,
-            ]);
+                if (!$assemblyResult['success']) {
+                    return response()->json([
+                        'success' => false,
+                        'error' => [
+                            'code' => 'ASSEMBLY_FAILED',
+                            'message' => $assemblyResult['error'],
+                        ],
+                    ], 500);
+                }
+
+                // Update session stats
+                UploadSession::where('session_id', $file->upload_session_id)
+                    ->increment('completed_files');
+
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'fileId' => $file->id,
+                        'status' => 'completed',
+                        'filePath' => $assemblyResult['file_path'],
+                        'fileUrl' => $assemblyResult['file_url'],
+                        'completed' => true,
+                    ],
+                ]);
+            }
 
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'chunkId' => $result['chunk_id'],
+                    'fileId' => $file->id,
+                    'status' => 'uploading',
                     'chunkIndex' => $chunkIndex,
                     'uploadedChunks' => $file->uploaded_chunks,
                     'totalChunks' => $file->total_chunks,
-                    'progress' => round(($file->uploaded_chunks / $file->total_chunks) * 100, 2),
+                    'completed' => false,
                 ],
-            ], 200);
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => [
-                    'code' => 'VALIDATION_ERROR',
-                    'message' => 'Invalid request data',
-                    'details' => $e->errors(),
-                ],
-            ], 400);
+            ]);
+
         } catch (\Exception $e) {
             Log::error('Chunk upload failed', [
-                'file_id' => $request->input('fileId'),
-                'chunk_index' => $request->input('chunkIndex'),
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
@@ -304,8 +285,8 @@ class FileUploadController extends Controller
             return response()->json([
                 'success' => false,
                 'error' => [
-                    'code' => 'CHUNK_UPLOAD_FAILED',
-                    'message' => 'Failed to upload chunk',
+                    'code' => 'CHUNK_UPLOAD_ERROR',
+                    'message' => 'Unexpected error during chunk upload',
                     'details' => config('app.debug') ? ['error' => $e->getMessage()] : [],
                 ],
             ], 500);
@@ -345,6 +326,22 @@ class FileUploadController extends Controller
                 ], 404);
             }
 
+            // Check if file is already completed
+            if ($file->status === File::STATUS_COMPLETED) {
+                 return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'fileId' => $file->id,
+                        'url' => $file->file_url,
+                        'fileName' => $file->file_name,
+                        'fileSize' => $file->file_size,
+                        'fileType' => $file->file_type,
+                        'uploadedAt' => $file->updated_at->toIso8601String(),
+                        'message' => 'File already completed',
+                    ],
+                ], 200);
+            }
+
             // Validate all chunks are received
             $validationResult = $this->chunkProcessor->validateChunkSequence($fileId);
             if (!$validationResult['success']) {
@@ -354,7 +351,7 @@ class FileUploadController extends Controller
                         'code' => 'INCOMPLETE_UPLOAD',
                         'message' => $validationResult['error'],
                         'details' => [
-                            'missing_chunks' => $validationResult['missing_chunks'],
+                            'missing_chunks' => $validationResult['missing_chunks'] ?? [],
                         ],
                     ],
                 ], 400);
@@ -434,7 +431,7 @@ class FileUploadController extends Controller
      * @param int $fileId
      * @return JsonResponse
      */
-    public function cancelUpload(int $fileId): JsonResponse
+    public function cancelUpload($fileId): JsonResponse
     {
         try {
             // Verify file belongs to authenticated user
@@ -516,60 +513,4 @@ class FileUploadController extends Controller
         }
     }
 
-    /**
-     * Get allowed MIME types whitelist
-     *
-     * @return array
-     */
-    private function getAllowedMimeTypes(): array
-    {
-        return [
-            // Images
-            'image/jpeg',
-            'image/jpg',
-            'image/png',
-            'image/gif',
-            'image/webp',
-            'image/svg+xml',
-            
-            // Videos
-            'video/mp4',
-            'video/mpeg',
-            'video/quicktime',
-            'video/x-msvideo',
-            'video/webm',
-            
-            // Audio
-            'audio/mpeg',
-            'audio/mp3',
-            'audio/wav',
-            'audio/ogg',
-            'audio/webm',
-            
-            // Documents
-            'application/pdf',
-            'application/msword',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'application/vnd.ms-excel',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'application/vnd.ms-powerpoint',
-            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            'text/plain',
-            'text/csv',
-        ];
-    }
-
-    /**
-     * Get dangerous file extensions
-     *
-     * @return array
-     */
-    private function getDangerousExtensions(): array
-    {
-        return [
-            'exe', 'bat', 'cmd', 'com', 'pif', 'scr', 'vbs', 'js', 'jar',
-            'sh', 'app', 'deb', 'rpm', 'dmg', 'pkg', 'run', 'bin',
-            'ps1', 'psm1', 'psd1', 'ps1xml', 'psc1', 'msi', 'gadget',
-        ];
-    }
 }

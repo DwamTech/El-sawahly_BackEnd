@@ -110,6 +110,29 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
     Route::post('/articles/{article}/toggle-status', [ArticleController::class, 'toggleStatus']);
     Route::delete('/articles/{article}', [ArticleController::class, 'destroy']);
 
+    // File Management Routes
+    Route::prefix('files')->group(function () {
+        Route::post('/upload/initiate', [\App\Http\Controllers\API\FileUploadController::class, 'initiateUpload']);
+        Route::post('/upload/chunk', [\App\Http\Controllers\API\FileUploadController::class, 'uploadChunk'])->name('files.upload.chunk');
+
+        // File Explorer Routes
+        Route::prefix('explorer')->group(function () {
+            Route::get('/browse', [\App\Http\Controllers\API\FileExplorerController::class, 'browse']);
+            Route::post('/rename', [\App\Http\Controllers\API\FileExplorerController::class, 'rename']);
+            Route::delete('/delete', [\App\Http\Controllers\API\FileExplorerController::class, 'delete']);
+            Route::post('/create-folder', [\App\Http\Controllers\API\FileExplorerController::class, 'createFolder']);
+            Route::get('/download', [\App\Http\Controllers\API\FileExplorerController::class, 'download']);
+        });
+
+        // File Archive Routes
+        Route::prefix('archive')->group(function () {
+            Route::get('/', [\App\Http\Controllers\API\FileArchiveController::class, 'index']);
+            Route::get('/search', [\App\Http\Controllers\API\FileArchiveController::class, 'search']); // Allow GET for search if preferred, but controller uses POST. Let's support POST as per controller docblock.
+            Route::post('/search', [\App\Http\Controllers\API\FileArchiveController::class, 'search']);
+            Route::get('/{id}', [\App\Http\Controllers\API\FileArchiveController::class, 'show']);
+        });
+    });
+
     // Visuals Routes
     Route::post('/visuals', [VisualController::class, 'store']);
     Route::match(['put', 'post'], '/visuals/{visual}', [VisualController::class, 'update']);
