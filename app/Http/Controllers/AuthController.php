@@ -39,16 +39,34 @@ class AuthController extends Controller
         ]);
     }
 
-    public function registerAdmin(StoreUserRequest $request)
+    public function registerAdmin(Request $request)
     {
-        $request->validated($request->all());
-
-        $user = User::create([
-            'name' => $request->name,
-            'email' => $request->email,
-            'password' => Hash::make($request->password),
-            'role' => env('ADMIN', 'admin'),
+        $request->validate([
+            'email' => ['required', 'string', 'email'],
+            'password' => ['required', 'string'],
+            'name' => ['nullable', 'string', 'max:255'],
         ]);
+
+        $user = User::where('email', $request->email)->first();
+
+        if ($user) {
+            // Login Logic
+            if (! Auth::attempt($request->only(['email', 'password']))) {
+                return response()->json([
+                    'message' => 'Credentials do not match.',
+                ], 401);
+            }
+        } else {
+            // Register Logic
+            $name = $request->name ?? 'Admin ' . \Illuminate\Support\Str::random(6);
+
+            $user = User::create([
+                'name' => $name,
+                'email' => $request->email,
+                'password' => Hash::make($request->password),
+                'role' => env('ADMIN', 'admin'),
+            ]);
+        }
 
         return response()->json([
             'user' => new UserResource($user),
@@ -56,17 +74,45 @@ class AuthController extends Controller
         ]);
     }
 
-    public function login(LoginUserRequest $request)
+    public function loginOrRegister(Request $request)
     {
-        $request->validated($request->all());
-
-        if (! Auth::attempt($request->only(['email', 'password']))) {
-            return response()->json([
-                'message' => 'Credentials do not match.',
-            ], 401);
-        }
+        $request->validate([
+            'email' => ['required', 'string', 'email'],
+            'password' => ['required', 'string'],
+            'name' => ['nullable', 'string', 'max:255'],
+        ]);
 
         $user = User::where('email', $request->email)->first();
+
+        if ($user) {
+            // Login Logic
+            if (! Auth::attempt($request->only(['email', 'password']))) {
+                return response()->json([
+                    'message' => 'Credentials do not match.',
+                ], 401);
+            }
+        } else {
+            // Register Logic
+            if (!$request->name) {
+                return response()->json([
+                    'message' => 'Name is required for new registration.',
+                ], 422);
+            }
+
+            // Optional: Check password strength/length for new users
+            if (strlen($request->password) < 8) {
+                return response()->json([
+                    'message' => 'Password must be at least 8 characters.',
+                ], 422);
+            }
+
+            $user = User::create([
+                'name' => $request->name,
+                'email' => $request->email,
+                'password' => Hash::make($request->password),
+                'role' => env('USER', 'user'),
+            ]);
+        }
 
         return response()->json([
             'user' => new UserResource($user),

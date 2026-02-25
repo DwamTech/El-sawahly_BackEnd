@@ -2,7 +2,10 @@
 
 require __DIR__.'/vendor/autoload.php';
 
-$baseUrl = 'http://127.0.0.1:8000/api'; // Adjust if your local server is on a different port
+$dotenv = Dotenv\Dotenv::createImmutable(__DIR__);
+$dotenv->safeLoad();
+
+$baseUrl = ($_ENV['APP_URL'] ?? 'http://127.0.0.1:8000') . '/api'; // Adjust if your local server is on a different port
 
 function makeRequest($url, $method = 'GET', $data = [], $files = [])
 {

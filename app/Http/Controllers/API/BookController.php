@@ -12,7 +12,11 @@ class BookController extends Controller
     // Public: List Books
     public function index(Request $request)
     {
-        $query = Book::query();
+        $query = Book::with('section');
+
+        if ($request->has('section_id')) {
+            $query->where('section_id', $request->section_id);
+        }
 
         if ($request->has('series_id')) {
             $query->where('book_series_id', $request->series_id);
@@ -30,7 +34,7 @@ class BookController extends Controller
     // Public: Show Book
     public function show($id)
     {
-        $book = Book::with('series')->find($id);
+        $book = Book::with(['series', 'section'])->find($id);
 
         if (! $book) {
             return response()->json(['message' => 'الكتاب غير موجود'], 404);
@@ -94,6 +98,7 @@ class BookController extends Controller
             'author_name' => 'required|string|max:1048576',
             'type' => 'required|in:single,part',
             'book_series_id' => 'nullable|required_if:type,part|exists:book_series,id',
+            'section_id' => 'nullable|exists:sections,id',
         ]);
 
         if ($validator->fails()) {
@@ -144,6 +149,7 @@ class BookController extends Controller
             'author_name' => 'string|max:1048576',
             'type' => 'in:single,part',
             'book_series_id' => 'nullable|exists:book_series,id',
+            'section_id' => 'nullable|exists:sections,id',
         ]);
 
         if ($validator->fails()) {

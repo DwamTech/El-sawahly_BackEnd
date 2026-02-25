@@ -2,7 +2,10 @@
 
 require __DIR__.'/vendor/autoload.php';
 
-$baseUrl = 'http://127.0.0.1:8000/api';
+$dotenv = Dotenv\Dotenv::createImmutable(__DIR__);
+$dotenv->safeLoad();
+
+$baseUrl = ($_ENV['APP_URL'] ?? 'http://127.0.0.1:8000') . '/api';
 
 function makeRequest($url, $method = 'GET', $data = [])
 {

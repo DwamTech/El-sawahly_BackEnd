@@ -26,6 +26,10 @@ class ArticleController extends Controller
         $query = Article::with(['section']);
 
         // Filters
+        if ($request->filled('section_id')) {
+            $query->where('section_id', $request->section_id);
+        }
+
         if ($request->filled('status')) {
             $query->where('status', $request->status);
         }

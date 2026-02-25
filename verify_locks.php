@@ -2,10 +2,13 @@
 
 require __DIR__.'/vendor/autoload.php';
 
+$dotenv = Dotenv\Dotenv::createImmutable(__DIR__);
+$dotenv->safeLoad();
+
 // Mocking some internal Laravel environment for the test script if needed,
 // but since we want to test the API, we'll use CURL.
 
-$baseUrl = 'http://127.0.0.1:8000/api';
+$baseUrl = ($_ENV['APP_URL'] ?? 'http://127.0.0.1:8000') . '/api';
 
 function testEndpoint($url, $moduleName)
 {

@@ -15,7 +15,12 @@ class DocumentController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Document::with('user:id,name');
+        $query = Document::with(['user:id,name', 'section']);
+
+        // Filter by section
+        if ($request->has('section_id')) {
+            $query->where('section_id', $request->section_id);
+        }
 
         // Search by title or keywords
         if ($request->has('search')) {
@@ -51,6 +56,7 @@ class DocumentController extends Controller
             'cover_type' => 'required|in:auto,upload',
             'cover_path' => 'nullable|required_if:cover_type,upload|image|max:1048576',
             'keywords' => 'nullable', // Can be array or JSON string
+            'section_id' => 'nullable|exists:sections,id',
         ]);
 
         if ($validator->fails()) {
@@ -93,7 +99,7 @@ class DocumentController extends Controller
      */
     public function show($id)
     {
-        $document = Document::with('user:id,name')->find($id);
+        $document = Document::with(['user:id,name', 'section'])->find($id);
 
         if (! $document) {
             return response()->json(['message' => 'الملف غير موجود'], 404);

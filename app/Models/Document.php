@@ -23,6 +23,7 @@ class Document extends Model
         'views_count',
         'downloads_count',
         'user_id',
+        'section_id',
     ];
 
     protected $casts = [
@@ -35,5 +36,10 @@ class Document extends Model
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function section()
+    {
+        return $this->belongsTo(Section::class);
     }
 }

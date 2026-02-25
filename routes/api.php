@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/register/admin', [AuthController::class, 'registerAdmin']);
-Route::post('/login', [AuthController::class, 'login']);
+Route::post('/login', [AuthController::class, 'loginOrRegister']);
 
 // Public section routes
 Route::get('/sections', [SectionController::class, 'index']);

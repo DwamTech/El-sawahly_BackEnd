@@ -24,6 +24,7 @@ class Book extends Model
         'author_name',
         'type',
         'book_series_id',
+        'section_id',
     ];
 
     protected $casts = [
@@ -38,6 +39,11 @@ class Book extends Model
     public function series()
     {
         return $this->belongsTo(BookSeries::class, 'book_series_id');
+    }
+
+    public function section()
+    {
+        return $this->belongsTo(Section::class);
     }
 
     public function getAverageRatingAttribute()

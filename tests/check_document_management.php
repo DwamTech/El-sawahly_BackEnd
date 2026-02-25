@@ -6,7 +6,12 @@
  */
 echo "=== Document Management System Test ===\n\n";
 
-$baseUrl = 'http://localhost:8000/api';
+require __DIR__.'/../vendor/autoload.php';
+
+$dotenv = Dotenv\Dotenv::createImmutable(__DIR__.'/../');
+$dotenv->safeLoad();
+
+$baseUrl = ($_ENV['APP_URL'] ?? 'http://localhost:8000') . '/api';
 $adminEmail = 'admin@dwam.com';
 $adminPassword = 'password';
 
