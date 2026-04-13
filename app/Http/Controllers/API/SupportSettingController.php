@@ -15,6 +15,9 @@ class SupportSettingController extends Controller
         $settings = SupportSetting::pluck('value', 'key');
 
         return response()->json([
+            // Site Status
+            'site_status' => $settings->get('site_status', 'open'),
+
             // Support settings
             'individual_support_enabled' => $settings->get('individual_support_enabled') === 'true',
             'institutional_support_enabled' => $settings->get('institutional_support_enabled') === 'true',
@@ -33,12 +36,23 @@ class SupportSettingController extends Controller
     public function update(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'key' => 'required|in:individual_support_enabled,institutional_support_enabled,module_articles_enabled,module_audios_enabled,module_visuals_enabled,module_galleries_enabled,module_library_enabled,module_links_enabled',
-            'value' => 'required|in:true,false',
+            'key' => 'required|in:individual_support_enabled,institutional_support_enabled,module_articles_enabled,module_audios_enabled,module_visuals_enabled,module_galleries_enabled,module_library_enabled,module_links_enabled,site_status',
+            'value' => 'required',
         ]);
 
         if ($validator->fails()) {
             return response()->json(['errors' => $validator->errors()], 422);
+        }
+
+        // Validate value based on key
+        if ($request->key === 'site_status') {
+            if (!in_array($request->value, ['open', 'closed'])) {
+                return response()->json(['errors' => ['value' => ['Invalid value for site_status. Must be open or closed.']]], 422);
+            }
+        } else {
+             if (!in_array($request->value, ['true', 'false'])) {
+                 return response()->json(['errors' => ['value' => ['Value must be true or false']]], 422);
+             }
         }
 
         SupportSetting::updateOrCreate(
@@ -76,4 +90,40 @@ class SupportSettingController extends Controller
 
         return response()->json(['message' => 'تم تحديث جميع إعدادات الدعم بنجاح']);
     }
+
+    /**
+     * Get Site Status
+     * GET /api/settings/site-status
+     */
+    public function getSiteStatus()
+    {
+        $status = SupportSetting::where('key', 'site_status')->value('value') ?? 'open';
+        return response()->json(['status' => $status]);
+    }
+
+    /**
+     * Update Site Status (Open/Close)
+     * POST /api/settings/site-status
+     */
+    public function updateSiteStatus(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'status' => 'required|in:open,closed',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
+        }
+
+        SupportSetting::updateOrCreate(
+            ['key' => 'site_status'],
+            ['value' => $request->status]
+        );
+
+        return response()->json([
+            'message' => 'تم تحديث حالة الموقع بنجاح',
+            'status' => $request->status
+        ]);
+    }
 }
+

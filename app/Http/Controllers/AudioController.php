@@ -57,7 +57,17 @@ class AudioController extends Controller
         $audio = Audio::with(['section', 'user'])->findOrFail($id);
         $audio->increment('views_count');
 
-        return response()->json($audio);
+        $next = Audio::where('section_id', $audio->section_id)
+            ->where('id', '!=', $audio->id)
+            ->where('id', '<', $audio->id)
+            ->orderByDesc('id')
+            ->select('id', 'title', 'thumbnail', 'created_at')
+            ->first();
+
+        return response()->json([
+            'audio' => $audio,
+            'next'  => $next,
+        ]);
     }
 
     public function update(UpdateAudioRequest $request, Audio $audio)
@@ -95,14 +105,14 @@ class AudioController extends Controller
     {
         if ($audio->file_path) {
             $original = $audio->getRawOriginal('file_path');
-            if (! str_starts_with((string) $original, 'http://') && ! str_starts_with((string) $original, 'https://')) {
+            if ($original && ! str_starts_with((string) $original, 'http://') && ! str_starts_with((string) $original, 'https://')) {
                 Storage::disk('public')->delete($original);
             }
         }
 
         if ($audio->thumbnail) {
             $original = $audio->getRawOriginal('thumbnail');
-            if (! str_starts_with((string) $original, 'http://') && ! str_starts_with((string) $original, 'https://')) {
+            if ($original && ! str_starts_with((string) $original, 'http://') && ! str_starts_with((string) $original, 'https://')) {
                 Storage::disk('public')->delete($original);
             }
         }

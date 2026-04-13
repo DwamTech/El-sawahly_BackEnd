@@ -118,7 +118,7 @@ class ArticleController extends Controller
      */
     public function show($id)
     {
-        $article = Article::with(['section', 'issue'])->findOrFail($id);
+        $article = Article::with(['section'])->findOrFail($id);
 
         // Get visited articles from cookie
         $visitedArticles = json_decode(Cookie::get('visited_articles', '[]'), true);
@@ -134,9 +134,17 @@ class ArticleController extends Controller
             Cookie::queue('visited_articles', json_encode($visitedArticles), 60 * 24 * 30);
         }
 
+        $next = Article::where('section_id', $article->section_id)
+            ->where('status', 'published')
+            ->where('id', '!=', $article->id)
+            ->where('published_at', '<=', $article->published_at)
+            ->orderByDesc('published_at')
+            ->select('id', 'title', 'slug', 'excerpt', 'featured_image', 'published_at')
+            ->first();
+
         return response()->json([
             'article' => $article,
-            // 'visited_articles' => $visitedArticles // Removed debug info for cleaner response
+            'next'    => $next,
         ]);
     }
 

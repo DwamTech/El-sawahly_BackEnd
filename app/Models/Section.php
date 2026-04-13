@@ -9,8 +9,16 @@ class Section extends Model
 {
     use HasFactory;
 
+    // Content type constants
+    const TYPE_ARTICLE = 'مقال';
+    const TYPE_BOOK    = 'كتب';
+    const TYPE_VIDEO   = 'فيديو';
+    const TYPE_AUDIO   = 'صوت';
+
     protected $fillable = [
         'name',
+        'name_sw',
+        'type',
         'slug',
         'description',
         'is_active',
@@ -29,5 +37,20 @@ class Section extends Model
     public function articles()
     {
         return $this->hasMany(Article::class);
+    }
+
+    public function audios()
+    {
+        return $this->hasMany(Audio::class);
+    }
+
+    public function visuals()
+    {
+        return $this->hasMany(Visual::class);
+    }
+
+    public function books()
+    {
+        return $this->hasMany(Book::class);
     }
 }

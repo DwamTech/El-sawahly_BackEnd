@@ -66,11 +66,19 @@ class VisualController extends Controller
     public function show($id)
     {
         $visual = Visual::with(['section', 'user'])->findOrFail($id);
-
-        // Increment views
         $visual->increment('views_count');
 
-        return response()->json($visual);
+        $next = Visual::where('section_id', $visual->section_id)
+            ->where('id', '!=', $visual->id)
+            ->where('id', '<', $visual->id)
+            ->orderByDesc('id')
+            ->select('id', 'title', 'thumbnail', 'created_at')
+            ->first();
+
+        return response()->json([
+            'visual' => $visual,
+            'next'   => $next,
+        ]);
     }
 
     /**
@@ -111,12 +119,18 @@ class VisualController extends Controller
      */
     public function destroy(Visual $visual)
     {
-        // Delete files
         if ($visual->file_path) {
-            Storage::disk('public')->delete($visual->getRawOriginal('file_path'));
+            $original = $visual->getRawOriginal('file_path');
+            if ($original && ! str_starts_with((string) $original, 'http://') && ! str_starts_with((string) $original, 'https://')) {
+                Storage::disk('public')->delete($original);
+            }
         }
+
         if ($visual->thumbnail) {
-            Storage::disk('public')->delete($visual->getRawOriginal('thumbnail'));
+            $original = $visual->getRawOriginal('thumbnail');
+            if ($original && ! str_starts_with((string) $original, 'http://') && ! str_starts_with((string) $original, 'https://')) {
+                Storage::disk('public')->delete($original);
+            }
         }
 
         $visual->delete();

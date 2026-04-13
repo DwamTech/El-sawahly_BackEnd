@@ -40,12 +40,20 @@ class BookController extends Controller
             return response()->json(['message' => 'الكتاب غير موجود'], 404);
         }
 
-        // Increment Views
         $book->increment('views_count');
 
-        $response = ['book' => $book];
+        $next = Book::where('section_id', $book->section_id)
+            ->where('id', '!=', $book->id)
+            ->where('id', '<', $book->id)
+            ->orderByDesc('id')
+            ->select('id', 'title', 'author_name', 'cover_path', 'cover_type', 'created_at')
+            ->first();
 
-        // If part of series, bring siblings
+        $response = [
+            'book' => $book,
+            'next' => $next,
+        ];
+
         if ($book->type === 'part' && $book->book_series_id) {
             $siblings = Book::where('book_series_id', $book->book_series_id)
                 ->where('id', '!=', $book->id)

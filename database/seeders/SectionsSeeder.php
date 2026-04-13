@@ -4,81 +4,80 @@ namespace Database\Seeders;
 
 use App\Models\Section;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Str;
 
 class SectionsSeeder extends Seeder
 {
     /**
-     * Run the database seeds.
+     * The only sections that should exist after seeding.
+     * Any section NOT in this list will be deleted.
      */
+    private array $required = [
+        [
+            'name'    => 'معتقدات',
+            'name_sw' => 'ITIKADI',
+            'type'    => 'مقال',
+            'slug'    => 'muqatadat',
+        ],
+        [
+            'name'    => 'شبهات',
+            'name_sw' => 'SHUBUHATI',
+            'type'    => 'مقال',
+            'slug'    => 'shubuhat',
+        ],
+        [
+            'name'    => 'فتاوي',
+            'name_sw' => 'FATWA',
+            'type'    => 'مقال',
+            'slug'    => 'fatawa',
+        ],
+        [
+            'name'    => 'مقالات',
+            'name_sw' => 'MAKALA',
+            'type'    => 'مقال',
+            'slug'    => 'maqalat',
+        ],
+        [
+            'name'    => 'كتب',
+            'name_sw' => 'VITUKO',
+            'type'    => 'كتب',
+            'slug'    => 'kutub',
+        ],
+        [
+            'name'    => 'فيديوهات',
+            'name_sw' => 'VEDIO',
+            'type'    => 'فيديو',
+            'slug'    => 'videos',
+        ],
+        [
+            'name'    => 'صوتيات',
+            'name_sw' => 'SAUTI',
+            'type'    => 'صوت',
+            'slug'    => 'audios',
+        ],
+    ];
+
     public function run(): void
     {
-        $sections = [
-            [
-                'name' => 'افتتاحية العدد',
-                'slug' => 'editorial-opening',
-                'description' => 'افتتاحية العدد',
-            ],
-            [
-                'name' => 'قاموس المصطلحات',
-                'slug' => 'glossary',
-                'description' => 'قاموس المصطلحات',
-            ],
-            [
-                'name' => 'بروفايل (شخصيات صوفية )',
-                'slug' => 'profiles',
-                'description' => 'بروفايل (شخصيات صوفية )',
-            ],
-            [
-                'name' => 'بالأرقام (إحصائيات وتحليلات)',
-                'slug' => 'stats',
-                'description' => 'بالأرقام (إحصائيات وتحليلات)',
-            ],
-            [
-                'name' => 'خبر وتعليق (أخبار الصوفية)',
-                'slug' => 'news',
-                'description' => 'خبر وتعليق (أخبار الصوفية)',
-            ],
-            [
-                'name' => 'شبهات تحت المجهر (شبهات وردود)',
-                'slug' => 'refutations',
-                'description' => 'شبهات تحت المجهر (شبهات وردود)',
-            ],
-            [
-                'name' => 'من الأرشيف (وثائق ومحاضر)',
-                'slug' => 'archive',
-                'description' => 'من الأرشيف (وثائق ومحاضر)',
-            ],
-            [
-                'name' => 'محطات تاريخية (تاريخ الصوفية)',
-                'slug' => 'history',
-                'description' => 'محطات تاريخية (تاريخ الصوفية)',
-            ],
-            [
-                'name' => 'مكتبة العدد (مؤلفات مفيدة)',
-                'slug' => 'library',
-                'description' => 'مكتبة العدد (مؤلفات مفيدة)',
-            ],
-            [
-                'name' => 'اللوائح',
-                'slug' => 'regulations',
-                'description' => 'اللوائح التنظيمية',
-            ],
-            [
-                'name' => 'أخبار الوقف',
-                'slug' => 'waqf-news',
-                'description' => 'أخبار ومستجدات الوقف',
-            ],
-        ];
+        $requiredSlugs = array_column($this->required, 'slug');
 
-        foreach ($sections as $section) {
+        // Upsert required sections
+        foreach ($this->required as $data) {
             Section::updateOrCreate(
-                ['slug' => $section['slug']],
+                ['slug' => $data['slug']],
                 [
-                    'name' => $section['name'],
-                    'description' => $section['description'],
+                    'name'      => $data['name'],
+                    'name_sw'   => $data['name_sw'],
+                    'type'      => $data['type'],
+                    'slug'      => $data['slug'],
                     'is_active' => true,
                 ]
             );
         }
+
+        // Remove any section NOT in the required list
+        Section::whereNotIn('slug', $requiredSlugs)->delete();
+
+        $this->command->info('Sections seeded: '.implode(', ', array_column($this->required, 'name')));
     }
 }
