@@ -22,6 +22,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->alias([
             'admin' => \App\Http\Middleware\CheckAdmin::class,
+            'content.admin' => \App\Http\Middleware\CheckContentManager::class,
             'module.status' => \App\Http\Middleware\CheckModuleStatus::class,
         ]);
 

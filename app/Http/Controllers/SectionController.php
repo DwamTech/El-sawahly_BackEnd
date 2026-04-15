@@ -33,7 +33,7 @@ class SectionController extends Controller
      */
     public function show($id)
     {
-        $section = Section::where('is_active', true)->findOrFail($id);
+        $section = $this->resolveActiveSectionOrFail($id);
 
         return response()->json([
             'section' => $section,
@@ -148,9 +148,9 @@ class SectionController extends Controller
     // ---------------------------------------------------------------
 
     /** GET /sections/{id}/articles */
-    public function getArticles(Request $request, int $id)
+    public function getArticles(Request $request, $id)
     {
-        $section = Section::where('is_active', true)->findOrFail($id);
+        $section = $this->resolveActiveSectionOrFail($id);
 
         $items = Article::where('section_id', $section->id)
             ->where('status', 'published')
@@ -161,9 +161,9 @@ class SectionController extends Controller
     }
 
     /** GET /sections/{id}/books */
-    public function getBooks(Request $request, int $id)
+    public function getBooks(Request $request, $id)
     {
-        $section = Section::where('is_active', true)->findOrFail($id);
+        $section = $this->resolveActiveSectionOrFail($id);
 
         $items = Book::where('section_id', $section->id)
             ->orderByDesc('created_at')
@@ -173,9 +173,9 @@ class SectionController extends Controller
     }
 
     /** GET /sections/{id}/videos */
-    public function getVideos(Request $request, int $id)
+    public function getVideos(Request $request, $id)
     {
-        $section = Section::where('is_active', true)->findOrFail($id);
+        $section = $this->resolveActiveSectionOrFail($id);
 
         $items = Visual::where('section_id', $section->id)
             ->orderByDesc('created_at')
@@ -185,9 +185,9 @@ class SectionController extends Controller
     }
 
     /** GET /sections/{id}/audios */
-    public function getAudios(Request $request, int $id)
+    public function getAudios(Request $request, $id)
     {
-        $section = Section::where('is_active', true)->findOrFail($id);
+        $section = $this->resolveActiveSectionOrFail($id);
 
         $items = Audio::where('section_id', $section->id)
             ->orderByDesc('created_at')
@@ -235,5 +235,10 @@ class SectionController extends Controller
             ->limit($limit)
             ->get()
             ->toArray();
+    }
+
+    private function resolveActiveSectionOrFail(mixed $reference): Section
+    {
+        return Section::resolveReference($reference, true) ?? abort(404);
     }
 }

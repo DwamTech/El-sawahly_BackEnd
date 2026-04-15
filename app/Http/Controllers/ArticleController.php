@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\StoreArticleRequest;
 use App\Http\Requests\UpdateArticleRequest;
 use App\Models\Article;
+use App\Models\Section;
 use App\Services\ImageUploadService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -274,7 +275,16 @@ class ArticleController extends Controller
         $query = Article::with(['section']);
 
         if ($request->filled('section_id')) {
-            $query->where('section_id', $request->section_id);
+            $sectionReference = $request->section_id;
+            $resolvedSection = Section::resolveReference($sectionReference);
+
+            if ($resolvedSection) {
+                $query->where('section_id', $resolvedSection->id);
+            } elseif (is_numeric($sectionReference)) {
+                $query->where('section_id', $sectionReference);
+            } else {
+                $query->whereRaw('1 = 0');
+            }
         }
 
         if ($request->filled('status')) {

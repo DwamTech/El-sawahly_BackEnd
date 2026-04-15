@@ -19,6 +19,8 @@ class User extends Authenticatable
 
     const ROLE_AUTHOR = 'author';
 
+    const ROLE_REVIEWER = 'reviewer';
+
     const ROLE_USER = 'user';
 
     /**
@@ -69,6 +71,26 @@ class User extends Authenticatable
     public function isEditor()
     {
         return $this->role === self::ROLE_EDITOR;
+    }
+
+    public function isReviewer()
+    {
+        return $this->role === self::ROLE_REVIEWER;
+    }
+
+    public function hasAnyRole(array $roles): bool
+    {
+        return in_array($this->role, $roles, true);
+    }
+
+    public function canManageContent(): bool
+    {
+        return $this->hasAnyRole([
+            self::ROLE_ADMIN,
+            self::ROLE_EDITOR,
+            self::ROLE_AUTHOR,
+            self::ROLE_REVIEWER,
+        ]);
     }
 
     // public function isAuthor()
