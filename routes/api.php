@@ -142,6 +142,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::middleware(['admin'])->prefix('admin')->group(function () {
 
         // Articles (Admin CUD)
+        Route::get('/articles', [ArticleController::class, 'adminIndex']);
+        Route::get('/articles/{article}', [ArticleController::class, 'adminShow']);
         Route::post('/sections/{section}/articles', [ArticleController::class, 'store']);
         Route::post('/articles', [ArticleController::class, 'store']);
         Route::match(['put', 'post'], '/articles/{article}', [ArticleController::class, 'update']);

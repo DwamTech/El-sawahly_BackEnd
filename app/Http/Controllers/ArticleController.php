@@ -6,6 +6,7 @@ use App\Http\Requests\StoreArticleRequest;
 use App\Http\Requests\UpdateArticleRequest;
 use App\Models\Article;
 use App\Services\ImageUploadService;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cookie;
 
@@ -23,29 +24,19 @@ class ArticleController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Article::with(['section']);
+        $articles = $this->buildIndexQuery($request)
+            ->paginate($this->resolvePerPage($request));
 
-        // Filters
-        if ($request->filled('section_id')) {
-            $query->where('section_id', $request->section_id);
-        }
+        return response()->json($articles);
+    }
 
-        if ($request->filled('status')) {
-            $query->where('status', $request->status);
-        }
-
-        if ($request->filled('author')) {
-            $query->where('author_name', 'like', '%'.$request->author.'%');
-        }
-
-        if ($request->filled('date')) {
-            $query->whereDate('gregorian_date', $request->date);
-        }
-
-        // Sort by newest
-        $query->latest();
-
-        $articles = $query->paginate(15);
+    /**
+     * Display a listing of the resource for dashboard/admin usage.
+     */
+    public function adminIndex(Request $request)
+    {
+        $articles = $this->buildIndexQuery($request)
+            ->paginate($this->resolvePerPage($request));
 
         return response()->json($articles);
     }
@@ -145,6 +136,16 @@ class ArticleController extends Controller
         return response()->json([
             'article' => $article,
             'next'    => $next,
+        ]);
+    }
+
+    /**
+     * Display the specified resource for dashboard/admin usage without mutating counters.
+     */
+    public function adminShow(Article $article)
+    {
+        return response()->json([
+            'article' => $article->load('section'),
         ]);
     }
 
@@ -266,5 +267,46 @@ class ArticleController extends Controller
             ->pluck('author_name');
 
         return response()->json($authors);
+    }
+
+    private function buildIndexQuery(Request $request): Builder
+    {
+        $query = Article::with(['section']);
+
+        if ($request->filled('section_id')) {
+            $query->where('section_id', $request->section_id);
+        }
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        if ($request->filled('author')) {
+            $query->where('author_name', 'like', '%'.$request->author.'%');
+        }
+
+        if ($request->filled('date')) {
+            $query->whereDate('gregorian_date', $request->date);
+        }
+
+        if ($request->filled('search')) {
+            $search = trim((string) $request->search);
+            $query->where(function (Builder $builder) use ($search) {
+                $builder
+                    ->where('title', 'like', '%'.$search.'%')
+                    ->orWhere('slug', 'like', '%'.$search.'%')
+                    ->orWhere('content', 'like', '%'.$search.'%')
+                    ->orWhere('author_name', 'like', '%'.$search.'%');
+            });
+        }
+
+        return $query->latest();
+    }
+
+    private function resolvePerPage(Request $request): int
+    {
+        $perPage = $request->integer('per_page', 15);
+
+        return max(1, min($perPage, 500));
     }
 }

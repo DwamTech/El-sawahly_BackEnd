@@ -41,6 +41,12 @@ class AuthController extends Controller
 
     public function registerAdmin(Request $request)
     {
+        if (! filter_var(env('ALLOW_PUBLIC_ADMIN_BOOTSTRAP', false), FILTER_VALIDATE_BOOL)) {
+            return response()->json([
+                'message' => 'This endpoint is disabled.',
+            ], 403);
+        }
+
         $request->validate([
             'email' => ['required', 'string', 'email'],
             'password' => ['required', 'string'],
