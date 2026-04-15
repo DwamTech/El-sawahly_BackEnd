@@ -115,7 +115,7 @@ class UserManagementController extends Controller
             'name' => 'required|string|max:1048576',
             'email' => 'required|email|unique:users,email',
             'password' => 'required|string|min:8',
-            'role' => 'required|in:admin,editor,author,reviewer,user',
+            'role' => 'required|in:'.implode(',', User::manageableRoles()),
         ]);
 
         if ($validator->fails()) {
@@ -149,7 +149,7 @@ class UserManagementController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'string|max:1048576',
             'email' => 'email|unique:users,email,'.$id,
-            'role' => 'in:admin,editor,author,reviewer,user',
+            'role' => 'in:'.implode(',', User::manageableRoles()),
         ]);
 
         if ($validator->fails()) {
@@ -167,6 +167,12 @@ class UserManagementController extends Controller
         }
 
         if ($request->has('role')) {
+            if ((int) $user->id === (int) auth()->id() && $request->role !== User::ROLE_ADMIN) {
+                return response()->json([
+                    'message' => 'لا يمكنك خفض صلاحيات حسابك الإداري الحالي',
+                ], 403);
+            }
+
             $data['role'] = $request->role;
         }
 
@@ -221,6 +227,12 @@ class UserManagementController extends Controller
         if ($user->id === auth()->id()) {
             return response()->json([
                 'message' => 'لا يمكنك حذف حسابك الخاص',
+            ], 403);
+        }
+
+        if ($user->role === User::ROLE_ADMIN && User::query()->where('role', User::ROLE_ADMIN)->count() <= 1) {
+            return response()->json([
+                'message' => 'لا يمكن حذف آخر حساب إداري في النظام',
             ], 403);
         }
 

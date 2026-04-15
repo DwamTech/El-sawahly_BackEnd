@@ -6,6 +6,13 @@ $backupToS3 = filter_var(env('BACKUP_TO_S3', false), FILTER_VALIDATE_BOOL)
 
 return [
 
+    'smart' => [
+        'os' => strtolower((string) env('os', 'linux')),
+        'disk' => env('BACKUP_DISK', 'local'),
+        'directory' => env('BACKUP_DIRECTORY', env('APP_NAME', 'laravel-backup')),
+        'temporary_directory' => storage_path('app/backup-temp'),
+    ],
+
     'backup' => [
 
         /*

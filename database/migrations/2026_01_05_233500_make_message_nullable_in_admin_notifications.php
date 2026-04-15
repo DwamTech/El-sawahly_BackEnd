@@ -12,7 +12,7 @@ return new class extends Migration
     public function up(): void
     {
         // Make message column nullable if it exists
-        if (Schema::hasColumn('admin_notifications', 'message')) {
+        if (DB::getDriverName() === 'mysql' && Schema::hasColumn('admin_notifications', 'message')) {
             DB::statement('ALTER TABLE admin_notifications MODIFY message TEXT NULL');
         }
     }

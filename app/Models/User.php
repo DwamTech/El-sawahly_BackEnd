@@ -23,6 +23,21 @@ class User extends Authenticatable
 
     const ROLE_USER = 'user';
 
+    public const MANAGEABLE_ROLES = [
+        self::ROLE_ADMIN,
+        self::ROLE_EDITOR,
+        self::ROLE_AUTHOR,
+        self::ROLE_REVIEWER,
+        self::ROLE_USER,
+    ];
+
+    public const INTERNAL_DASHBOARD_ROLES = [
+        self::ROLE_ADMIN,
+        self::ROLE_EDITOR,
+        self::ROLE_AUTHOR,
+        self::ROLE_REVIEWER,
+    ];
+
     /**
      * The attributes that are mass assignable.
      *
@@ -91,6 +106,16 @@ class User extends Authenticatable
             self::ROLE_AUTHOR,
             self::ROLE_REVIEWER,
         ]);
+    }
+
+    public static function manageableRoles(): array
+    {
+        return self::MANAGEABLE_ROLES;
+    }
+
+    public static function internalDashboardRoles(): array
+    {
+        return self::INTERNAL_DASHBOARD_ROLES;
     }
 
     // public function isAuthor()

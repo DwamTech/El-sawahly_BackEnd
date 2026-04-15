@@ -19,7 +19,7 @@ return new class extends Migration
             }
 
             // Make 'body' nullable if it still exists
-            if (Schema::hasColumn('admin_notifications', 'body')) {
+            if (DB::getDriverName() === 'mysql' && Schema::hasColumn('admin_notifications', 'body')) {
                 DB::statement('ALTER TABLE admin_notifications MODIFY body TEXT NULL');
             }
         });

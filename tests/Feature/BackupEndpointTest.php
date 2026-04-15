@@ -6,11 +6,15 @@ use App\Http\Middleware\EnsureVisitorCookie;
 use App\Http\Middleware\TrackVisits;
 use App\Models\BackupHistory;
 use App\Models\User;
+use App\Services\Backup\BackupManagerService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Laravel\Sanctum\Sanctum;
+use Mockery;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Concerns\RefreshDatabaseWithForce;
 use Tests\TestCase;
+use ZipArchive;
 
 class BackupEndpointTest extends TestCase
 {
@@ -18,623 +22,394 @@ class BackupEndpointTest extends TestCase
 
     protected User $adminUser;
 
-    protected string $appName;
+    protected string $backupDirectory;
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        // تعطيل Middlewares التي تسبب مشاكل في الاختبارات
         $this->withoutMiddleware([
             TrackVisits::class,
             EnsureVisitorCookie::class,
         ]);
 
-        // إنشاء مستخدم Admin للاختبارات
+        Storage::fake('local');
+
+        config()->set('backup.smart.disk', 'local');
+        config()->set('backup.smart.directory', 'test-backups');
+        config()->set('backup.smart.os', 'linux');
+        config()->set('database.default', 'mysql');
+        config()->set('database.connections.mysql.driver', 'mysql');
+        config()->set('database.connections.mysql.database', 'ashia_test');
+        config()->set('database.connections.mysql.username', 'root');
+        config()->set('database.connections.mysql.password', 'secret');
+        config()->set('database.connections.mysql.host', '127.0.0.1');
+        config()->set('database.connections.mysql.port', '3306');
+        config()->set('database.connections.mysql.dump.dump_binary_path', '');
+
         $this->adminUser = User::factory()->create([
             'role' => User::ROLE_ADMIN,
         ]);
 
-        // الحصول على اسم التطبيق من الإعدادات
-        $this->appName = config('backup.backup.name');
-
-        // التأكد من وجود مجلد النسخ الاحتياطية
-        Storage::disk('local')->makeDirectory($this->appName);
+        $this->backupDirectory = config('backup.smart.directory');
+        Storage::disk('local')->makeDirectory($this->backupDirectory);
     }
 
     protected function tearDown(): void
     {
-        // تنظيف ملفات الاختبار بعد الانتهاء
-        $this->cleanupTestBackups();
+        Mockery::close();
 
         parent::tearDown();
     }
 
-    /**
-     * تنظيف ملفات الاختبار.
-     */
-    private function cleanupTestBackups(): void
+    private function authenticateAsAdmin(): void
     {
-        $disk = Storage::disk('local');
-
-        if (! $disk->exists($this->appName)) {
-            return;
-        }
-
-        $files = $disk->files($this->appName);
-
-        foreach ($files as $file) {
-            if (str_contains($file, 'test-backup') || str_contains($file, 'uploaded-backup') || str_contains($file, 'workflow-test')) {
-                $disk->delete($file);
-            }
-        }
+        Sanctum::actingAs($this->adminUser);
     }
 
-    /**
-     * إنشاء ملف zip وهمي للاختبار.
-     */
-    private function createFakeBackupZip(string $fileName): string
+    private function authenticateAs(User $user): void
     {
-        $disk = Storage::disk('local');
-        $tempPath = storage_path('app/backup-temp');
+        Sanctum::actingAs($user);
+    }
 
-        if (! is_dir($tempPath)) {
-            mkdir($tempPath, 0755, true);
-        }
+    private function createStoredBackup(string $fileName, bool $withValidStructure = true): string
+    {
+        $temporaryPath = storage_path('app/'.$fileName);
+        $zip = new ZipArchive;
+        $zip->open($temporaryPath, ZipArchive::CREATE | ZipArchive::OVERWRITE);
 
-        // إنشاء ملف zip حقيقي للاختبار
-        $zipPath = $tempPath.'/'.$fileName;
-        $zip = new \ZipArchive;
-
-        if ($zip->open($zipPath, \ZipArchive::CREATE | \ZipArchive::OVERWRITE) === true) {
-            // إضافة ملف SQL وهمي
-            $zip->addFromString('db-dumps/mysql-database.sql', '-- Fake SQL dump for testing');
-
-            // إضافة مجلد storage/app/public وهمي
+        if ($withValidStructure) {
+            $zip->addFromString('db-dumps/ashia_test.sql', '-- fake dump');
             $zip->addEmptyDir('storage/app/public');
-            $zip->addFromString('storage/app/public/test.txt', 'Test file content');
-
-            $zip->close();
+            $zip->addFromString('storage/app/public/example.txt', 'content');
+            $zip->addFromString('manifest.json', json_encode(['ok' => true]));
+        } else {
+            $zip->addFromString('notes.txt', 'invalid backup');
         }
 
-        // نقل الملف إلى مجلد النسخ الاحتياطية
-        $destinationPath = $this->appName.'/'.$fileName;
-        $disk->put($destinationPath, file_get_contents($zipPath));
-        unlink($zipPath);
+        $zip->close();
 
-        return $destinationPath;
+        $relativePath = $this->backupDirectory.'/'.$fileName;
+        Storage::disk('local')->put($relativePath, file_get_contents($temporaryPath));
+        @unlink($temporaryPath);
+
+        return $relativePath;
     }
 
-    // =====================================================================
-    // اختبارات Authentication
-    // =====================================================================
+    private function makeUploadedBackup(string $fileName, bool $withValidStructure = true): UploadedFile
+    {
+        $temporaryPath = storage_path('app/upload-'.$fileName);
+        $zip = new ZipArchive;
+        $zip->open($temporaryPath, ZipArchive::CREATE | ZipArchive::OVERWRITE);
+
+        if ($withValidStructure) {
+            $zip->addFromString('db-dumps/ashia_test.sql', '-- fake dump');
+            $zip->addEmptyDir('storage/app/public');
+            $zip->addFromString('storage/app/public/example.txt', 'content');
+        } else {
+            $zip->addFromString('db-dumps/readme.txt', 'missing sql and storage');
+        }
+
+        $zip->close();
+
+        return new UploadedFile($temporaryPath, $fileName, 'application/zip', null, true);
+    }
+
+    private function mockBackupManager(callable $callback): void
+    {
+        $mock = Mockery::mock(BackupManagerService::class);
+        $callback($mock);
+        $this->app->instance(BackupManagerService::class, $mock);
+    }
 
     #[Test]
     public function unauthenticated_users_cannot_access_backup_endpoints(): void
     {
-        // List
-        $this->getJson('/api/backups')
-            ->assertUnauthorized();
-
-        // History
-        $this->getJson('/api/backups/history')
-            ->assertUnauthorized();
-
-        // Create
-        $this->postJson('/api/backups/create')
-            ->assertUnauthorized();
-
-        // Download
-        $this->getJson('/api/backups/download?file_name=test.zip')
-            ->assertUnauthorized();
-
-        // Upload
-        $this->postJson('/api/backups/upload')
-            ->assertUnauthorized();
-
-        // Restore
-        $this->postJson('/api/backups/restore')
-            ->assertUnauthorized();
-    }
-
-    // =====================================================================
-    // اختبارات List Backups (GET /api/backups)
-    // =====================================================================
-
-    #[Test]
-    public function list_backups_returns_empty_array_when_no_backups(): void
-    {
-        // حذف جميع ملفات zip الموجودة
-        $disk = Storage::disk('local');
-        $files = $disk->files($this->appName);
-        foreach ($files as $file) {
-            if (pathinfo($file, PATHINFO_EXTENSION) === 'zip') {
-                $disk->delete($file);
-            }
-        }
-
-        $response = $this->actingAs($this->adminUser)
-            ->getJson('/api/backups');
-
-        $response->assertOk()
-            ->assertJson([]);
+        $this->getJson('/api/admin/backups')->assertUnauthorized();
+        $this->getJson('/api/admin/backups/history')->assertUnauthorized();
+        $this->postJson('/api/admin/backups/create')->assertUnauthorized();
+        $this->getJson('/api/admin/backups/download?file_name=test.zip')->assertUnauthorized();
+        $this->postJson('/api/admin/backups/upload')->assertUnauthorized();
+        $this->postJson('/api/admin/backups/restore')->assertUnauthorized();
+        $this->deleteJson('/api/admin/backups?file_name=test.zip')->assertUnauthorized();
     }
 
     #[Test]
-    public function list_backups_returns_existing_backups(): void
+    public function non_admin_users_cannot_access_backup_endpoints(): void
     {
-        // إنشاء ملفات نسخ احتياطية وهمية
-        $fileName = 'test-backup-'.time().'.zip';
-        $this->createFakeBackupZip($fileName);
+        $user = User::factory()->create([
+            'role' => User::ROLE_USER,
+        ]);
 
-        $response = $this->actingAs($this->adminUser)
-            ->getJson('/api/backups');
+        $this->authenticateAs($user);
+
+        $this->getJson('/api/admin/backups')->assertForbidden();
+        $this->postJson('/api/admin/backups/create')->assertForbidden();
+        $this->deleteJson('/api/admin/backups?file_name=test.zip')->assertForbidden();
+    }
+
+    #[Test]
+    public function list_backups_returns_runtime_meta_and_items(): void
+    {
+        $this->authenticateAsAdmin();
+        $fileName = 'backup-a.zip';
+        $this->createStoredBackup($fileName);
+
+        $response = $this->getJson('/api/admin/backups');
 
         $response->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('meta.os', 'linux')
+            ->assertJsonPath('meta.backup_directory', $this->backupDirectory)
             ->assertJsonStructure([
-                '*' => [
-                    'file_name',
-                    'file_size',
-                    'created_at',
-                    'download_link',
+                'success',
+                'data' => [
+                    '*' => ['file_name', 'file_path', 'file_size', 'last_modified'],
                 ],
+                'meta' => ['environment', 'os', 'backup_directory', 'storage_source'],
             ]);
 
-        // التحقق من وجود الملف في الاستجابة
-        $backups = $response->json();
-        $found = collect($backups)->contains('file_name', $fileName);
-        $this->assertTrue($found, 'The created backup file should be in the list');
+        $this->assertSame($fileName, $response->json('data.0.file_name'));
     }
 
     #[Test]
-    public function list_backups_ordered_by_newest_first(): void
+    public function download_backup_requires_existing_file_name(): void
     {
-        // إنشاء ملفين بتوقيتات مختلفة
-        $oldFileName = 'test-backup-old-'.time().'.zip';
-        $this->createFakeBackupZip($oldFileName);
+        $this->authenticateAsAdmin();
 
-        sleep(1); // انتظار ثانية للتأكد من اختلاف التوقيت
-
-        $newFileName = 'test-backup-new-'.time().'.zip';
-        $this->createFakeBackupZip($newFileName);
-
-        $response = $this->actingAs($this->adminUser)
-            ->getJson('/api/backups');
-
-        $response->assertOk();
-
-        $backups = $response->json();
-
-        // التحقق من أن الملف الأحدث يأتي أولاً
-        if (count($backups) >= 2) {
-            $firstBackupTime = strtotime($backups[0]['created_at']);
-            $secondBackupTime = strtotime($backups[1]['created_at']);
-            $this->assertGreaterThanOrEqual($secondBackupTime, $firstBackupTime);
-        }
-    }
-
-    // =====================================================================
-    // اختبارات Create Backup (POST /api/backups/create)
-    // =====================================================================
-
-    #[Test]
-    public function create_backup_rejects_invalid_mode(): void
-    {
-        $response = $this->actingAs($this->adminUser)
-            ->postJson('/api/backups/create', [
-                'mode' => 'invalid_mode',
-            ]);
-
-        $response->assertStatus(422)
+        $this->getJson('/api/admin/backups/download')
+            ->assertStatus(400)
             ->assertJson([
                 'success' => false,
-                'message' => 'Invalid mode. Allowed values: full, db',
-            ]);
-    }
-
-    #[Test]
-    public function create_backup_validates_mode_parameter(): void
-    {
-        // اختبار أن الـ endpoint يقبل الأوضاع الصحيحة
-        // نختبر فقط الـ validation، ليس التنفيذ الفعلي
-
-        // الوضع غير الصالح يجب أن يُرفض
-        $invalidResponse = $this->actingAs($this->adminUser)
-            ->postJson('/api/backups/create', ['mode' => 'invalid']);
-
-        $invalidResponse->assertStatus(422);
-
-        // الوضع الصالح يجب أن يُقبل (حتى لو فشل التنفيذ)
-        $validResponse = $this->actingAs($this->adminUser)
-            ->postJson('/api/backups/create', ['mode' => 'full']);
-
-        // نتوقع إما 200 (نجاح) أو 500 (فشل في التنفيذ لكن مرّ الـ validation)
-        $this->assertContains($validResponse->status(), [200, 500]);
-
-        // إذا كانت 200، نتحقق من الـ response
-        if ($validResponse->status() === 200) {
-            $validResponse->assertJson(['success' => true, 'mode' => 'full']);
-        }
-    }
-
-    // =====================================================================
-    // اختبارات Download Backup (GET /api/backups/download)
-    // =====================================================================
-
-    #[Test]
-    public function download_backup_successfully(): void
-    {
-        $fileName = 'test-backup-download-'.time().'.zip';
-        $this->createFakeBackupZip($fileName);
-
-        $response = $this->actingAs($this->adminUser)
-            ->get('/api/backups/download?file_name='.$fileName);
-
-        $response->assertOk();
-
-        // التحقق من أن الاستجابة هي ملف للتحميل
-        $this->assertTrue(
-            $response->headers->has('content-disposition'),
-            'Response should have content-disposition header for download'
-        );
-    }
-
-    #[Test]
-    public function download_backup_requires_file_name(): void
-    {
-        $response = $this->actingAs($this->adminUser)
-            ->getJson('/api/backups/download');
-
-        $response->assertStatus(400)
-            ->assertJson([
                 'message' => 'File name is required',
             ]);
-    }
 
-    #[Test]
-    public function download_backup_returns_404_for_nonexistent_file(): void
-    {
-        $response = $this->actingAs($this->adminUser)
-            ->getJson('/api/backups/download?file_name=nonexistent-file.zip');
-
-        $response->assertStatus(404)
+        $this->getJson('/api/admin/backups/download?file_name=missing.zip')
+            ->assertStatus(404)
             ->assertJson([
+                'success' => false,
                 'message' => 'Backup file not found',
             ]);
     }
 
-    // =====================================================================
-    // اختبارات Upload Backup (POST /api/backups/upload)
-    // =====================================================================
-
     #[Test]
-    public function upload_backup_requires_file(): void
+    public function download_backup_returns_binary_file_for_existing_archive(): void
     {
-        $response = $this->actingAs($this->adminUser)
-            ->postJson('/api/backups/upload', []);
+        $this->authenticateAsAdmin();
+        $fileName = 'download-me.zip';
+        $this->createStoredBackup($fileName);
 
-        $response->assertStatus(422)
-            ->assertJsonValidationErrors(['file']);
+        $response = $this->get('/api/admin/backups/download?file_name='.$fileName);
+
+        $response->assertOk();
+        $this->assertTrue($response->headers->has('content-disposition'));
+        $this->assertStringContainsString($fileName, (string) $response->headers->get('content-disposition'));
     }
 
     #[Test]
-    public function upload_backup_rejects_non_zip_files(): void
+    public function upload_backup_requires_zip_file_and_valid_backup_structure(): void
     {
-        $file = UploadedFile::fake()->create('document.pdf', 100, 'application/pdf');
+        $this->authenticateAsAdmin();
 
-        $response = $this->actingAs($this->adminUser)
-            ->postJson('/api/backups/upload', [
-                'file' => $file,
-            ]);
-
-        $response->assertStatus(422)
+        $this->postJson('/api/admin/backups/upload', [])
+            ->assertStatus(422)
             ->assertJsonValidationErrors(['file']);
-    }
 
-    #[Test]
-    public function upload_backup_rejects_duplicate_filename(): void
-    {
-        $fileName = 'uploaded-backup-duplicate-'.time().'.zip';
+        $invalidFile = UploadedFile::fake()->create('notes.pdf', 10, 'application/pdf');
+        $this->postJson('/api/admin/backups/upload', ['file' => $invalidFile])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['file']);
 
-        // إنشاء ملف موجود مسبقاً
-        $this->createFakeBackupZip($fileName);
-
-        // محاولة رفع ملف بنفس الاسم
-        $file = UploadedFile::fake()->create($fileName, 100, 'application/zip');
-
-        $response = $this->actingAs($this->adminUser)
-            ->postJson('/api/backups/upload', [
-                'file' => $file,
-            ]);
-
-        $response->assertStatus(409)
+        $invalidBackup = $this->makeUploadedBackup('invalid-structure.zip', false);
+        $this->post('/api/admin/backups/upload', ['file' => $invalidBackup])
+            ->assertStatus(422)
             ->assertJson([
+                'success' => false,
+                'message' => 'Backup archive must contain db-dumps/*.sql and storage/app/public.',
+            ]);
+    }
+
+    #[Test]
+    public function upload_backup_stores_file_and_writes_history(): void
+    {
+        $this->authenticateAsAdmin();
+        $upload = $this->makeUploadedBackup('uploaded-backup.zip');
+
+        $response = $this->post('/api/admin/backups/upload', ['file' => $upload]);
+
+        $response->assertOk()
+            ->assertJson([
+                'success' => true,
+                'message' => 'Backup uploaded successfully.',
+                'path' => $this->backupDirectory.'/uploaded-backup.zip',
+            ]);
+
+        Storage::disk('local')->assertExists($this->backupDirectory.'/uploaded-backup.zip');
+        $this->assertDatabaseHas('backup_histories', [
+            'type' => 'upload',
+            'status' => 'success',
+            'file_name' => 'uploaded-backup.zip',
+            'user_id' => $this->adminUser->id,
+        ]);
+    }
+
+    #[Test]
+    public function upload_backup_rejects_duplicate_names(): void
+    {
+        $this->authenticateAsAdmin();
+        $this->createStoredBackup('duplicate.zip');
+
+        $upload = $this->makeUploadedBackup('duplicate.zip');
+
+        $this->post('/api/admin/backups/upload', ['file' => $upload])
+            ->assertStatus(409)
+            ->assertJson([
+                'success' => false,
                 'message' => 'A backup file with this name already exists.',
             ]);
     }
 
     #[Test]
-    public function upload_backup_validates_zip_extension(): void
+    public function delete_backup_validates_and_removes_archive(): void
     {
-        // اختبار أن الـ endpoint يتحقق من امتداد الملف
-        $txtFile = UploadedFile::fake()->create('backup.txt', 100, 'text/plain');
+        $this->authenticateAsAdmin();
 
-        $response = $this->actingAs($this->adminUser)
-            ->postJson('/api/backups/upload', ['file' => $txtFile]);
-
-        $response->assertStatus(422)
-            ->assertJsonValidationErrors(['file']);
-    }
-
-    // =====================================================================
-    // اختبارات Restore Backup (POST /api/backups/restore)
-    // =====================================================================
-
-    #[Test]
-    public function restore_backup_requires_file_name(): void
-    {
-        $response = $this->actingAs($this->adminUser)
-            ->postJson('/api/backups/restore', []);
-
-        $response->assertStatus(400)
+        $this->deleteJson('/api/admin/backups')
+            ->assertStatus(400)
             ->assertJson([
+                'success' => false,
                 'message' => 'File name is required',
             ]);
-    }
 
-    #[Test]
-    public function restore_backup_rejects_invalid_file_names(): void
-    {
-        $invalidNames = [
-            '../../../etc/passwd',
-            '..\\..\\windows\\system32\\config',
-            'backup/../../../secret.zip',
-            '/absolute/path/backup.zip',
-        ];
-
-        foreach ($invalidNames as $invalidName) {
-            $response = $this->actingAs($this->adminUser)
-                ->postJson('/api/backups/restore', [
-                    'file_name' => $invalidName,
-                ]);
-
-            $response->assertStatus(422)
-                ->assertJson([
-                    'message' => 'Invalid file name',
-                ]);
-        }
-    }
-
-    #[Test]
-    public function restore_backup_returns_404_for_nonexistent_file(): void
-    {
-        $response = $this->actingAs($this->adminUser)
-            ->postJson('/api/backups/restore', [
-                'file_name' => 'nonexistent-backup.zip',
-            ]);
-
-        $response->assertStatus(404)
+        $this->deleteJson('/api/admin/backups?file_name=../../secret.zip')
+            ->assertStatus(422)
             ->assertJson([
-                'message' => 'Backup file not found',
+                'success' => false,
+                'message' => 'Invalid file name',
             ]);
 
-        // التحقق من تسجيل محاولة الاسترجاع
+        $fileName = 'delete-me.zip';
+        $this->createStoredBackup($fileName);
+
+        $this->deleteJson('/api/admin/backups?file_name='.$fileName)
+            ->assertOk()
+            ->assertJson([
+                'success' => true,
+                'message' => 'Backup file deleted successfully.',
+            ]);
+
+        Storage::disk('local')->assertMissing($this->backupDirectory.'/'.$fileName);
         $this->assertDatabaseHas('backup_histories', [
-            'type' => 'restore',
-            'status' => 'started',
-            'file_name' => 'nonexistent-backup.zip',
+            'type' => 'delete',
+            'status' => 'success',
+            'file_name' => $fileName,
         ]);
     }
 
-    // =====================================================================
-    // اختبارات History (GET /api/backups/history)
-    // =====================================================================
-
     #[Test]
-    public function history_returns_empty_array_when_no_records(): void
+    public function history_endpoint_returns_latest_records_with_user_relation(): void
     {
-        BackupHistory::query()->delete();
+        $this->authenticateAsAdmin();
 
-        $response = $this->actingAs($this->adminUser)
-            ->getJson('/api/backups/history');
-
-        $response->assertOk()
-            ->assertJson([]);
-    }
-
-    #[Test]
-    public function history_returns_records_with_correct_structure(): void
-    {
-        // إنشاء سجلات للاختبار
-        BackupHistory::create([
-            'type' => 'create',
+        BackupHistory::query()->create([
+            'type' => 'upload',
             'status' => 'success',
-            'file_name' => 'test-backup.zip',
-            'file_size' => 1024000,
-            'message' => 'Backup created successfully.',
+            'file_name' => 'one.zip',
+            'message' => 'Uploaded successfully.',
             'user_id' => $this->adminUser->id,
         ]);
 
-        BackupHistory::create([
-            'type' => 'restore',
-            'status' => 'success',
-            'file_name' => 'test-backup.zip',
-            'message' => 'Backup restored successfully.',
+        BackupHistory::query()->create([
+            'type' => 'delete',
+            'status' => 'failed',
+            'file_name' => 'two.zip',
+            'message' => 'Delete failed.',
             'user_id' => $this->adminUser->id,
         ]);
 
-        $response = $this->actingAs($this->adminUser)
-            ->getJson('/api/backups/history');
+        $response = $this->getJson('/api/admin/backups/history');
 
         $response->assertOk()
+            ->assertJsonPath('success', true)
             ->assertJsonStructure([
-                '*' => [
-                    'id',
-                    'type',
-                    'status',
-                    'file_name',
-                    'file_size',
-                    'message',
-                    'user_id',
-                    'created_at',
-                    'updated_at',
+                'success',
+                'data' => [
+                    '*' => [
+                        'id',
+                        'type',
+                        'status',
+                        'file_name',
+                        'message',
+                        'user' => ['id', 'name', 'email'],
+                    ],
                 ],
             ]);
-
-        $this->assertGreaterThanOrEqual(2, count($response->json()));
     }
 
     #[Test]
-    public function history_ordered_by_newest_first(): void
+    public function create_backup_endpoint_uses_service_and_returns_success_payload(): void
     {
-        BackupHistory::query()->delete();
+        $this->authenticateAsAdmin();
 
-        // إنشاء سجل قديم
-        $oldRecord = BackupHistory::create([
-            'type' => 'create',
-            'status' => 'success',
-            'message' => 'Old backup',
-        ]);
+        $this->mockBackupManager(function ($mock): void {
+            $mock->shouldReceive('createBackup')
+                ->once()
+                ->andReturn([
+                    'success' => true,
+                    'message' => 'Backup created successfully.',
+                    'file_name' => 'manual-backup.zip',
+                ]);
+        });
 
-        sleep(1);
-
-        // إنشاء سجل جديد
-        $newRecord = BackupHistory::create([
-            'type' => 'create',
-            'status' => 'success',
-            'message' => 'New backup',
-        ]);
-
-        $response = $this->actingAs($this->adminUser)
-            ->getJson('/api/backups/history');
-
-        $response->assertOk();
-
-        $records = $response->json();
-
-        // التحقق من أن السجل الأحدث يأتي أولاً
-        $this->assertEquals($newRecord->id, $records[0]['id']);
-        $this->assertEquals($oldRecord->id, $records[1]['id']);
-    }
-
-    #[Test]
-    public function history_limits_to_50_records(): void
-    {
-        BackupHistory::query()->delete();
-
-        // إنشاء 60 سجل
-        for ($i = 0; $i < 60; $i++) {
-            BackupHistory::create([
-                'type' => 'create',
-                'status' => 'success',
-                'message' => 'Backup #'.$i,
+        $this->postJson('/api/admin/backups/create')
+            ->assertOk()
+            ->assertJson([
+                'success' => true,
+                'message' => 'Backup created successfully.',
+                'file_name' => 'manual-backup.zip',
             ]);
-        }
-
-        $response = $this->actingAs($this->adminUser)
-            ->getJson('/api/backups/history');
-
-        $response->assertOk();
-
-        $this->assertCount(50, $response->json());
-    }
-
-    // =====================================================================
-    // اختبارات السيناريو الكامل (Integration Tests)
-    // =====================================================================
-
-    #[Test]
-    public function full_workflow_list_and_download(): void
-    {
-        // إنشاء ملف نسخة احتياطية
-        $fileName = 'workflow-test-'.time().'.zip';
-        $this->createFakeBackupZip($fileName);
-
-        // 1. عرض قائمة النسخ الاحتياطية
-        $listResponse = $this->actingAs($this->adminUser)
-            ->getJson('/api/backups');
-
-        $listResponse->assertOk();
-
-        $backups = collect($listResponse->json());
-        $createdBackup = $backups->firstWhere('file_name', $fileName);
-
-        $this->assertNotNull($createdBackup, 'Created backup should appear in the list');
-
-        // 2. تحميل النسخة
-        $downloadResponse = $this->actingAs($this->adminUser)
-            ->get('/api/backups/download?file_name='.$fileName);
-
-        $downloadResponse->assertOk();
-        $this->assertTrue($downloadResponse->headers->has('content-disposition'));
     }
 
     #[Test]
-    public function backup_history_model_stores_correctly(): void
+    public function restore_backup_endpoint_uses_service_and_returns_success_payload(): void
     {
-        // اختبار أن الـ Model يحفظ البيانات بشكل صحيح
-        $history = BackupHistory::create([
-            'type' => 'create',
-            'status' => 'success',
-            'file_name' => 'test.zip',
-            'file_size' => 1024,
-            'message' => 'Test message',
-            'user_id' => $this->adminUser->id,
-        ]);
+        $this->authenticateAsAdmin();
 
-        $this->assertDatabaseHas('backup_histories', [
-            'id' => $history->id,
-            'type' => 'create',
-            'status' => 'success',
-            'file_name' => 'test.zip',
-            'file_size' => 1024,
-            'message' => 'Test message',
-            'user_id' => $this->adminUser->id,
+        $this->mockBackupManager(function ($mock): void {
+            $mock->shouldReceive('restoreBackup')
+                ->once()
+                ->with('restore-me.zip', Mockery::type(User::class))
+                ->andReturn([
+                    'success' => true,
+                    'message' => 'Backup restored successfully.',
+                ]);
+        });
+
+        $this->postJson('/api/admin/backups/restore', [
+            'file_name' => 'restore-me.zip',
+        ])->assertOk()->assertJson([
+            'success' => true,
+            'message' => 'Backup restored successfully.',
         ]);
     }
 
     #[Test]
-    public function admin_middleware_blocks_non_admin_users(): void
+    public function restore_backup_validates_file_name_when_service_runs(): void
     {
-        // إنشاء مستخدم عادي
-        $regularUser = User::factory()->create([
-            'role' => User::ROLE_USER,
+        $this->authenticateAsAdmin();
+
+        $this->postJson('/api/admin/backups/restore', [])
+            ->assertStatus(400)
+            ->assertJson([
+                'success' => false,
+                'message' => 'File name is required',
+            ]);
+
+        $this->postJson('/api/admin/backups/restore', [
+            'file_name' => '../unsafe.zip',
+        ])->assertStatus(422)->assertJson([
+            'success' => false,
+            'message' => 'Invalid file name',
         ]);
-
-        // محاولة الوصول للـ endpoints كمستخدم عادي
-        $this->actingAs($regularUser)
-            ->getJson('/api/backups')
-            ->assertStatus(403);
-
-        $this->actingAs($regularUser)
-            ->getJson('/api/backups/history')
-            ->assertStatus(403);
-
-        $this->actingAs($regularUser)
-            ->postJson('/api/backups/create')
-            ->assertStatus(403);
-    }
-
-    #[Test]
-    public function backup_endpoints_accessible_by_admin(): void
-    {
-        // التحقق من أن الـ Admin يمكنه الوصول لجميع الـ endpoints
-        $this->actingAs($this->adminUser)
-            ->getJson('/api/backups')
-            ->assertOk();
-
-        $this->actingAs($this->adminUser)
-            ->getJson('/api/backups/history')
-            ->assertOk();
-
-        // Create - قد يفشل بسبب Queue لكن لا يجب أن يكون 403
-        $createResponse = $this->actingAs($this->adminUser)
-            ->postJson('/api/backups/create');
-        $this->assertNotEquals(403, $createResponse->status());
-
-        // Upload - validation error expected, not 403
-        $uploadResponse = $this->actingAs($this->adminUser)
-            ->postJson('/api/backups/upload');
-        $this->assertNotEquals(403, $uploadResponse->status());
     }
 }

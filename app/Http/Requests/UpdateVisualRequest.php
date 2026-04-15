@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Models\Section;
 use Illuminate\Foundation\Http\FormRequest;
 
 class UpdateVisualRequest extends FormRequest
@@ -14,15 +15,13 @@ class UpdateVisualRequest extends FormRequest
         return true;
     }
 
-    protected function prepareForValidation()
+    protected function prepareForValidation(): void
     {
         if ($this->has('section_id') && ! is_numeric($this->section_id) && ! empty($this->section_id)) {
-            $section = \App\Models\Section::where('name', $this->section_id)->first();
+            $section = Section::resolveReference($this->section_id);
             if ($section) {
                 $this->merge(['section_id' => $section->id]);
             } else {
-                // If section not found by name, set to null (will be handled by controller to use default)
-                // or remove it to avoid validation error if it's strict
                 $this->merge(['section_id' => null]);
             }
         }

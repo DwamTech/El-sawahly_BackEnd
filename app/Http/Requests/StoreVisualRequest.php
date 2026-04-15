@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Models\Section;
 use Illuminate\Foundation\Http\FormRequest;
 
 class StoreVisualRequest extends FormRequest
@@ -14,10 +15,10 @@ class StoreVisualRequest extends FormRequest
         return true;
     }
 
-    protected function prepareForValidation()
+    protected function prepareForValidation(): void
     {
         if ($this->has('section_id') && ! is_numeric($this->section_id) && ! empty($this->section_id)) {
-            $section = \App\Models\Section::where('name', $this->section_id)->first();
+            $section = Section::resolveReference($this->section_id);
             if ($section) {
                 $this->merge(['section_id' => $section->id]);
             } else {

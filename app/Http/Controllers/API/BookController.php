@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\Book;
+use App\Models\Section;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
@@ -15,7 +16,18 @@ class BookController extends Controller
         $query = Book::with('section');
 
         if ($request->has('section_id')) {
-            $query->where('section_id', $request->section_id);
+            $section = Section::resolveReference($request->input('section_id'));
+            if (! $section) {
+                return response()->json([
+                    'data' => [],
+                    'current_page' => 1,
+                    'last_page' => 1,
+                    'per_page' => max(1, min((int) $request->input('per_page', 20), 500)),
+                    'total' => 0,
+                ]);
+            }
+
+            $query->where('section_id', $section->id);
         }
 
         if ($request->has('series_id')) {
@@ -26,7 +38,18 @@ class BookController extends Controller
             $query->where('type', $request->type);
         }
 
-        $books = $query->latest()->paginate(20);
+        if ($request->filled('search')) {
+            $search = trim((string) $request->input('search'));
+            $query->where(function ($builder) use ($search) {
+                $builder
+                    ->where('title', 'like', "%{$search}%")
+                    ->orWhere('description', 'like', "%{$search}%")
+                    ->orWhere('author_name', 'like', "%{$search}%");
+            });
+        }
+
+        $perPage = max(1, min((int) $request->input('per_page', 20), 500));
+        $books = $query->latest()->paginate($perPage);
 
         return response()->json($books);
     }
@@ -106,7 +129,7 @@ class BookController extends Controller
             'author_name' => 'required|string|max:1048576',
             'type' => 'required|in:single,part',
             'book_series_id' => 'nullable|required_if:type,part|exists:book_series,id',
-            'section_id' => 'nullable|exists:sections,id',
+            'section_id' => 'nullable',
         ]);
 
         if ($validator->fails()) {
@@ -114,6 +137,11 @@ class BookController extends Controller
         }
 
         $data = $validator->validated();
+        $sectionId = $this->resolveSectionId($request->input('section_id'));
+        if ($request->filled('section_id') && $sectionId === null) {
+            return response()->json(['errors' => ['section_id' => ['القسم المحدد غير صالح']]], 422);
+        }
+        $data['section_id'] = $sectionId;
 
         // Handle File
         if ($request->hasFile('file_path')) {
@@ -157,7 +185,7 @@ class BookController extends Controller
             'author_name' => 'string|max:1048576',
             'type' => 'in:single,part',
             'book_series_id' => 'nullable|exists:book_series,id',
-            'section_id' => 'nullable|exists:sections,id',
+            'section_id' => 'nullable',
         ]);
 
         if ($validator->fails()) {
@@ -165,6 +193,13 @@ class BookController extends Controller
         }
 
         $data = $validator->validated();
+        $sectionId = $this->resolveSectionId($request->input('section_id'));
+        if ($request->filled('section_id') && $sectionId === null) {
+            return response()->json(['errors' => ['section_id' => ['القسم المحدد غير صالح']]], 422);
+        }
+        if ($request->has('section_id')) {
+            $data['section_id'] = $sectionId;
+        }
 
         // Handle File Update
         if ($request->hasFile('file_path')) {
@@ -206,5 +241,16 @@ class BookController extends Controller
             ->pluck('author_name');
 
         return response()->json($authors);
+    }
+
+    protected function resolveSectionId(mixed $reference): ?int
+    {
+        if ($reference === null || $reference === '') {
+            return null;
+        }
+
+        $section = Section::resolveReference($reference);
+
+        return $section?->id;
     }
 }

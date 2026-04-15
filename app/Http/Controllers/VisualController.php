@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\StoreVisualRequest;
 use App\Http\Requests\UpdateVisualRequest;
+use App\Models\Section;
 use App\Models\Visual;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -18,7 +19,18 @@ class VisualController extends Controller
         $query = Visual::with(['section', 'user']);
 
         if ($request->filled('section_id')) {
-            $query->where('section_id', $request->section_id);
+            $section = Section::resolveReference($request->input('section_id'));
+            if (! $section) {
+                return response()->json([
+                    'data' => [],
+                    'current_page' => 1,
+                    'last_page' => 1,
+                    'per_page' => max(1, min((int) $request->input('per_page', 15), 500)),
+                    'total' => 0,
+                ]);
+            }
+
+            $query->where('section_id', $section->id);
         }
 
         if ($request->filled('author')) {
@@ -29,7 +41,18 @@ class VisualController extends Controller
             $query->where('type', $request->type);
         }
 
-        $visuals = $query->latest()->paginate(15);
+        if ($request->filled('search')) {
+            $search = trim((string) $request->input('search'));
+            $query->where(function ($builder) use ($search) {
+                $builder
+                    ->where('title', 'like', "%{$search}%")
+                    ->orWhere('description', 'like', "%{$search}%")
+                    ->orWhere('keywords', 'like', "%{$search}%");
+            });
+        }
+
+        $perPage = max(1, min((int) $request->input('per_page', 15), 500));
+        $visuals = $query->latest()->paginate($perPage);
 
         return response()->json($visuals);
     }
