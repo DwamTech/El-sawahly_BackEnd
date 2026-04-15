@@ -1,5 +1,27 @@
 <?php
 
+$defaultOrigins = [
+    env('FRONTEND_URL', 'http://ushia.net'),
+    'http://ushia.net',
+    'https://ushia.net',
+    'http://www.ushia.net',
+    'https://www.ushia.net',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3001',
+];
+
+$envOrigins = array_map(
+    'trim',
+    explode(',', (string) env('CORS_ALLOWED_ORIGINS', ''))
+);
+
+$allowedOrigins = array_values(array_unique(array_filter([
+    ...$defaultOrigins,
+    ...$envOrigins,
+])));
+
 return [
 
     /*
@@ -19,15 +41,7 @@ return [
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => [
-        env('FRONTEND_URL', 'http://localhost:3000'),
-        'http://localhost:3000', // Explicit fallback
-        'http://127.0.0.1:3000',
-        'http://localhost:3001',
-        'http://127.0.0.1:3001',
-        'http://192.168.1.13:3001',
-        'http://192.168.1.53:3000',
-    ],
+    'allowed_origins' => $allowedOrigins,
 
     'allowed_origins_patterns' => [],
 
