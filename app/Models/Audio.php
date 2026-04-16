@@ -47,7 +47,8 @@ class Audio extends Model
             return asset('storage/'.$value);
         }
 
-        $youtubeId = $this->extractYoutubeId((string) $this->attributes['url'] ?? '');
+        $url = (string) ($this->attributes['url'] ?? '');
+        $youtubeId = $this->extractYoutubeId($url);
         if ($youtubeId) {
             return "https://img.youtube.com/vi/{$youtubeId}/hqdefault.jpg";
         }
